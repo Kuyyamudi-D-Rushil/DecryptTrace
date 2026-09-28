@@ -95,7 +95,7 @@ def test_api_does_not_expose_release():
             # Sub-routers or mounts might not have a simple path
             pass
     
-    expected_routes = {"/health", "/version", "/status"}
+    expected_routes = {"/health", "/version", "/status", "/ready"}
     actual_routes = {path for path in routes if path not in ["/openapi.json", "/docs", "/docs/oauth2-redirect", "/redoc"]}
     
     assert actual_routes == expected_routes, f"Unexpected routes found: {actual_routes}"
