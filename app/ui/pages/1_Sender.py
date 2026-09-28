@@ -60,17 +60,28 @@ if uploaded_file is not None:
 
 # 2. Recipient Enrollment
 st.header("2. Enroll Recipients")
-new_recip = st.text_input("New Recipient ID")
-if st.button("Enroll Recipient"):
-    if new_recip and new_recip not in state.enrolled_recipients:
-        # Generate and store their PQC keys via provider
-        state.keystore.get_dsa_keypair(new_recip)
-        state.keystore.get_kem_keypair(new_recip)
-        state.enrolled_recipients.append(new_recip)
-        state.save()
-        st.success(f"Recipient '{new_recip}' enrolled successfully with PQC identities.")
-    elif new_recip in state.enrolled_recipients:
+with st.form("recipient_enrollment", clear_on_submit=True):
+    new_recip = st.text_input("New Recipient ID", help="Use a short unique name, for example: recipient-1")
+    enroll_clicked = st.form_submit_button("Enroll Recipient", type="primary")
+
+if enroll_clicked:
+    recipient_id = new_recip.strip()
+    if not recipient_id:
+        st.error("Enter a recipient ID before enrolling.")
+    elif recipient_id in state.enrolled_recipients:
         st.warning("Recipient already enrolled.")
+    else:
+        try:
+            # Generate and store their PQC keys via the local demo provider.
+            state.keystore.get_dsa_keypair(recipient_id)
+            state.keystore.get_kem_keypair(recipient_id)
+            state.enrolled_recipients.append(recipient_id)
+            state.save()
+            st.success(f"Recipient '{recipient_id}' enrolled successfully. Select them below to run the release.")
+            # Re-render so the release selector immediately receives the new option.
+            st.rerun()
+        except Exception:
+            st.error("Recipient enrollment failed. Check the Streamlit terminal for details and try again.")
         
 st.write("Current Recipients:", state.enrolled_recipients)
 
@@ -80,7 +91,14 @@ if not state.documents:
     st.info("Upload a document first.")
 else:
     selected_doc = st.selectbox("Select Document", list(state.documents.keys()))
-    selected_recipients = st.multiselect("Select Recipients for Release", state.enrolled_recipients)
+    selected_recipients = st.multiselect(
+        "Select Recipients for Release",
+        state.enrolled_recipients,
+        disabled=not state.enrolled_recipients,
+        help="Enroll at least one recipient above before selecting recipients for this release.",
+    )
+    if not state.enrolled_recipients:
+        st.info("No recipients enrolled yet. Complete Step 2 first.")
     
     if st.button("Execute Release to Selected Recipients"):
         if not selected_recipients:
