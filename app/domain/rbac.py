@@ -13,10 +13,7 @@ class Role(str, Enum):
     INVESTIGATOR = "investigator"
     VERIFIER = "verifier"
 
-# In a production system, this secret should be securely injected via KMS or env vars.
-# We'll default to a secure environment variable or a strong default for the prototype.
-import os
-JWT_SECRET = os.environ.get("DT_JWT_SECRET", "super-secret-production-key-change-me")
+from app.config.settings import settings
 JWT_ALGORITHM = "HS256"
 
 security = HTTPBearer()
@@ -27,11 +24,11 @@ def create_access_token(user_id: str, role: Role, expires_delta_minutes: int = 6
         "role": role.value,
         "exp": time.time() + (expires_delta_minutes * 60)
     }
-    return jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
+    return jwt.encode(payload, settings.jwt_secret, algorithm=JWT_ALGORITHM)
 
 def get_current_user(credentials: HTTPAuthorizationCredentials = Security(security)) -> dict:
     try:
-        payload = jwt.decode(credentials.credentials, JWT_SECRET, algorithms=[JWT_ALGORITHM])
+        payload = jwt.decode(credentials.credentials, settings.jwt_secret, algorithms=[JWT_ALGORITHM])
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=401, detail="Token expired")
