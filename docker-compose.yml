@@ -1,0 +1,8 @@
+version: '3.8'
+
+services:
+  airgap-service:
+    build: .
+    network_mode: "none"
+    # Note: no ports are published here because network_mode is none.
+    # To test /health, follow docs/docker_airgap_verification.md
