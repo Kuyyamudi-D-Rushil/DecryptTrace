@@ -151,6 +151,12 @@ class ReleaseProtocol:
         
         orig_ciphertext, orig_nonce, orig_aad = doc_data
         
+        # Verify ciphertext integrity against manifest
+        import hashlib
+        computed_hash = hashlib.sha256(orig_ciphertext).hexdigest()
+        if computed_hash != manifest.ciphertext_hash:
+            raise ContractViolationError("Ciphertext integrity verification failed")
+        
         try:
             plaintext = decrypt_document(orig_ciphertext, dek, orig_nonce, orig_aad)
         except Exception as e:

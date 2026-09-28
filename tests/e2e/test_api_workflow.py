@@ -108,7 +108,7 @@ def test_full_api_workflow():
     from app.storage.models import KeyShare
     db = SessionLocal()
     recip_share = db.query(KeyShare).filter(KeyShare.document_id == doc_id, KeyShare.recipient_id == bob_id).first()
-    share_a_hex = recip_share.share_b_hex
+    share_a_hex = recip_share.encrypted_share
     db.close()
     
     # 4. Login Recipient
@@ -169,3 +169,83 @@ def test_full_api_workflow():
     pkg_id = ev_resp.json()["package_id"]
     
     # End of test
+def test_negative_cases():
+    import cv2, numpy as np
+    from app.storage.database import SessionLocal
+    from app.storage.models import Manifest
+    from app.protocol.models import ReleaseRequest
+    from app.protocol.serialization import canonicalize_for_signing
+    from app.crypto.signatures import SignatureWrapper
+    from app.config.settings import settings
+
+    sender_pk, sender_sk = key_prov.get_dsa_keypair("alice2")
+    recip_pk, recip_sk = key_prov.get_dsa_keypair("bob2")
+    charlie_pk, charlie_sk = key_prov.get_dsa_keypair("charlie2")
+    admin_pk, admin_sk = key_prov.get_dsa_keypair("admin2")
+    
+    # Register Admin
+    client.post("/auth/register", headers={"x-admin-key": "test_admin_key"}, json={"username": "admin2", "role": "administrator", "public_key": admin_pk.hex()})
+    chal = client.post("/auth/challenge", json={"username": "admin2"}).json()["nonce"]
+    sig = SignatureWrapper(settings.signature_parameter).sign(bytes.fromhex(chal), admin_sk, b"DecryptTrace/Login/v1").hex()
+    admin_token = client.post("/auth/token", json={"username": "admin2", "signature_hex": sig}).json()["access_token"]
+    admin_headers = {"Authorization": f"Bearer {admin_token}"}
+    
+    # Register Alice2
+    client.post("/auth/register", headers=admin_headers, json={"username": "alice2", "role": "sender", "public_key": sender_pk.hex(), "kem_public_key": key_prov.get_kem_keypair("alice2")[0].hex()})
+    # Register Bob2
+    resp = client.post("/auth/register", headers=admin_headers, json={"username": "bob2", "role": "recipient", "public_key": recip_pk.hex(), "kem_public_key": key_prov.get_kem_keypair("bob2")[0].hex()})
+    bob_id = resp.json()["id"]
+    # Register Charlie2
+    resp = client.post("/auth/register", headers=admin_headers, json={"username": "charlie2", "role": "recipient", "public_key": charlie_pk.hex(), "kem_public_key": key_prov.get_kem_keypair("charlie2")[0].hex()})
+    charlie_id = resp.json()["id"]
+
+    # Logins
+    alice_token = client.post("/auth/token", json={"username": "alice2", "signature_hex": SignatureWrapper(settings.signature_parameter).sign(bytes.fromhex(client.post("/auth/challenge", json={"username": "alice2"}).json()["nonce"]), sender_sk, b"DecryptTrace/Login/v1").hex()}).json()["access_token"]
+    bob_token = client.post("/auth/token", json={"username": "bob2", "signature_hex": SignatureWrapper(settings.signature_parameter).sign(bytes.fromhex(client.post("/auth/challenge", json={"username": "bob2"}).json()["nonce"]), recip_sk, b"DecryptTrace/Login/v1").hex()}).json()["access_token"]
+    charlie_token = client.post("/auth/token", json={"username": "charlie2", "signature_hex": SignatureWrapper(settings.signature_parameter).sign(bytes.fromhex(client.post("/auth/challenge", json={"username": "charlie2"}).json()["nonce"]), charlie_sk, b"DecryptTrace/Login/v1").hex()}).json()["access_token"]
+    
+    # Upload doc
+    img = np.zeros((32, 32, 3), dtype=np.uint8)
+    _, buf = cv2.imencode(".png", img)
+    resp = client.post("/documents/", headers={"Authorization": f"Bearer {alice_token}"}, files={"file": ("test.png", buf.tobytes(), "image/png")})
+    doc_id = resp.json()["document_id"]
+    man_id = resp.json()["manifest_id"]
+    
+    # Auth Bob2
+    client.post(f"/documents/{doc_id}/authorize", headers={"Authorization": f"Bearer {alice_token}"}, json={"recipient_username": "bob2"})
+
+    # 1. Unauthorized recipient (Charlie2) tries to release
+    chal_resp = client.post("/releases/challenge", headers={"Authorization": f"Bearer {charlie_token}"}, json={"document_id": doc_id})
+    req_id = chal_resp.json()["request_id"]
+    nonce = chal_resp.json()["nonce_hex"]
+    req = ReleaseRequest(request_id=req_id, document_id=doc_id, manifest_id=man_id, recipient_key_id=charlie_id, challenge_id=nonce, share_a_hex="invalid", protocol_version="1.0", auth_signature_hex="")
+    req.auth_signature_hex = SignatureWrapper(settings.signature_parameter).sign(canonicalize_for_signing(req), charlie_sk, b"DecryptTrace/RecipientAuthentication/v1").hex()
+    resp = client.post("/releases/request", headers={"Authorization": f"Bearer {charlie_token}"}, json=req.dict())
+    assert resp.status_code == 400
+    
+    # Bob2 requests challenge
+    chal_resp = client.post("/releases/challenge", headers={"Authorization": f"Bearer {bob_token}"}, json={"document_id": doc_id})
+    req_id = chal_resp.json()["request_id"]
+    nonce = chal_resp.json()["nonce_hex"]
+    
+    # 2. Invalid Signature
+    req = ReleaseRequest(request_id=req_id, document_id=doc_id, manifest_id=man_id, recipient_key_id=bob_id, challenge_id=nonce, share_a_hex="", protocol_version="1.0", auth_signature_hex="badsig")
+    resp = client.post("/releases/request", headers={"Authorization": f"Bearer {bob_token}"}, json=req.dict())
+    assert resp.status_code == 400
+
+    # 3. Tampered Ciphertext Hash
+    db = SessionLocal()
+    manifest = db.query(Manifest).filter(Manifest.id == man_id).first()
+    orig_hash = manifest.ciphertext_hash
+    manifest.ciphertext_hash = "deadbeef"
+    db.commit()
+    
+    req = ReleaseRequest(request_id=req_id, document_id=doc_id, manifest_id=man_id, recipient_key_id=bob_id, challenge_id=nonce, share_a_hex="", protocol_version="1.0", auth_signature_hex="")
+    req.auth_signature_hex = SignatureWrapper(settings.signature_parameter).sign(canonicalize_for_signing(req), recip_sk, b"DecryptTrace/RecipientAuthentication/v1").hex()
+    resp = client.post("/releases/request", headers={"Authorization": f"Bearer {bob_token}"}, json=req.dict())
+    assert resp.status_code == 400 
+    
+    # Restore hash
+    manifest.ciphertext_hash = orig_hash
+    db.commit()
+    db.close()

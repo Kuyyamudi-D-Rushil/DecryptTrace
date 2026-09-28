@@ -40,7 +40,7 @@ def test_shares_are_encrypted_in_db():
     auth_share = KeyShare(
         document_id="doc_123",
         recipient_id="AUTHORITY",
-        share_b_hex=auth_share_val
+        encrypted_share=auth_share_val
     )
     db.add(auth_share)
     db.commit()
@@ -49,9 +49,9 @@ def test_shares_are_encrypted_in_db():
     record = db.query(KeyShare).filter(KeyShare.recipient_id == "AUTHORITY").first()
     
     # Prove it's not raw hex
-    assert record.share_b_hex != share_b.hex()
+    assert record.encrypted_share != share_b.hex()
     
     # Prove it's decryptable
-    decrypted = state.keystore.decrypt_data(record.share_b_hex)
+    decrypted = state.keystore.decrypt_data(record.encrypted_share)
     assert decrypted == share_b
     db.close()

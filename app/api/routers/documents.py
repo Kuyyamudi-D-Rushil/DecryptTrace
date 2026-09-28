@@ -11,15 +11,11 @@ import hashlib
 import uuid
 import time
 import json
+from app.config.settings import settings
+
+from app.api.deps import get_db, get_symmetric_keystore
 
 router = APIRouter(prefix="/documents", tags=["documents"])
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 ALLOWED_MIMES = ["image/jpeg", "image/png"]
 MAX_FILE_SIZE = 50 * 1024 * 1024 # 50 MB
@@ -28,7 +24,8 @@ MAX_FILE_SIZE = 50 * 1024 * 1024 # 50 MB
 def upload_document(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles([Role.SENDER]))
+    current_user: dict = Depends(require_roles([Role.SENDER])),
+    keystore = Depends(get_symmetric_keystore)
 ):
     file_bytes = file.file.read()
     
@@ -114,16 +111,15 @@ def upload_document(
     # For MVP, we store a single share_b per document and give share_a out later,
     # or the recipient holds share_a.
     # We will use recipient_id = "AUTHORITY" or leave it generic.
-    from app.state import state
-    from app.config.settings import settings
     auth_share_val = share_b.hex()
     if settings.environment == "production":
-        auth_share_val = state.keystore.encrypt_data(share_b)
+        auth_share_val = keystore.encrypt_data(share_b)
 
     auth_share = KeyShare(
         document_id=doc_id,
         recipient_id="AUTHORITY",
-        share_b_hex=auth_share_val
+        encrypted_share=auth_share_val,
+        share_type="B"
     )
     db.add(auth_share)
     
@@ -140,12 +136,13 @@ def upload_document(
     # which will wrap this Share A for the recipient.
     sender_share_val = share_a.hex()
     if settings.environment == "production":
-        sender_share_val = state.keystore.encrypt_data(share_a)
+        sender_share_val = keystore.encrypt_data(share_a)
 
     sender_share = KeyShare(
         document_id=doc_id,
         recipient_id=sender_id,
-        share_b_hex=sender_share_val # we use this column to store Share A for the sender
+        encrypted_share=sender_share_val,
+        share_type="A"
     )
     db.add(sender_share)
     
@@ -196,7 +193,8 @@ def authorize_recipient(
             recip_share = KeyShare(
                 document_id=document_id,
                 recipient_id=recipient.id,
-                share_b_hex=sender_share.share_b_hex
+                encrypted_share=sender_share.encrypted_share,
+                share_type="A"
             )
             db.add(recip_share)
             

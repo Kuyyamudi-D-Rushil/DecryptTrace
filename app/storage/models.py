@@ -48,7 +48,8 @@ class KeyShare(Base):
     id = Column(Integer, primary_key=True, index=True)
     document_id = Column(String, ForeignKey("documents.id"), nullable=False)
     recipient_id = Column(String, ForeignKey("users.id"), nullable=False)
-    share_b_hex = Column(String, nullable=False)
+    encrypted_share = Column(String, nullable=False)
+    share_type = Column(String, nullable=False, default="B")
     created_at = Column(Float, default=time.time)
 
 class ConsumedChallenge(Base):
@@ -129,6 +130,7 @@ class ReleaseChallenge(Base):
     nonce = Column(String, primary_key=True, index=True)
     request_id = Column(String, nullable=False)
     recipient_id = Column(String, nullable=False)
+    document_id = Column(String, nullable=False)
     protocol_version = Column(String, nullable=False)
     expires_at = Column(Float, nullable=False)
 

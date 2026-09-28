@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.storage.database import SessionLocal
-from app.storage.models import Document, AuthChallenge as DBAuthChallenge
+from app.storage.models import Document, ReleaseChallenge
 from app.domain.rbac import require_roles, Role
 from app.protocol.release import ReleaseProtocol
 from app.protocol.models import ReleaseRequest, AuthChallenge
@@ -18,14 +18,9 @@ import uuid
 import time
 import json
 
-router = APIRouter(prefix="/releases", tags=["releases"])
+from app.api.deps import get_db, get_symmetric_keystore
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+router = APIRouter(prefix="/releases", tags=["releases"])
 
 # We need a shared Ledger instance for now, but in a real setup it should be DB-backed.
 # Since we are implementing Milestone 4 later, we will initialize it here.
@@ -49,16 +44,14 @@ def request_release_challenge(
     challenge = mgr.create_challenge(req_id, recipient_id, "1.0")
     
     # Store this challenge in DB temporarily
-    db_chal = DBAuthChallenge(
+    db_chal = ReleaseChallenge(
         nonce=challenge.nonce_hex,
-        username=recipient_id,
+        request_id=req_id,
+        recipient_id=recipient_id,
+        document_id=req.document_id,
+        protocol_version="1.0",
         expires_at=challenge.expires_at
     )
-    # We misuse the DBAuthChallenge table for release challenges by packing it, 
-    # but let's be careful. Actually, the Protocol verifies against a Pydantic AuthChallenge.
-    # It's better to store it as JSON in a generic or specific table, or use Redis.
-    # Since we have AuthChallenge table, we can serialize the extra fields.
-    db_chal.username = f"release:{recipient_id}:{req_id}:{challenge.protocol_version}"
     db.add(db_chal)
     db.commit()
     
@@ -68,26 +61,26 @@ def request_release_challenge(
 def execute_release(
     request: ReleaseRequest,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_roles([Role.RECIPIENT]))
+    current_user: dict = Depends(require_roles([Role.RECIPIENT])),
+    keystore = Depends(get_symmetric_keystore)
 ):
     recipient_id = current_user["sub"]
     if request.recipient_key_id != recipient_id:
         raise HTTPException(status_code=403, detail="Recipient ID mismatch")
         
-    # Reconstruct AuthChallenge from DB
-    chal_record = db.query(DBAuthChallenge).filter(DBAuthChallenge.nonce == request.challenge_id).first()
+    # Reconstruct ReleaseChallenge from DB
+    chal_record = db.query(ReleaseChallenge).filter(ReleaseChallenge.nonce == request.challenge_id).first()
     if not chal_record or chal_record.expires_at < time.time():
         raise HTTPException(status_code=401, detail="Challenge expired or invalid")
         
-    parts = chal_record.username.split(":")
-    if len(parts) != 4 or parts[0] != "release" or parts[1] != recipient_id:
+    if chal_record.recipient_id != recipient_id or chal_record.document_id != request.document_id:
         raise HTTPException(status_code=401, detail="Invalid challenge context")
         
     challenge = AuthChallenge(
-        request_id=parts[2],
-        recipient_key_id=parts[1],
+        request_id=chal_record.request_id,
+        recipient_key_id=chal_record.recipient_id,
         nonce_hex=chal_record.nonce,
-        protocol_version=parts[3],
+        protocol_version=chal_record.protocol_version,
         expires_at=chal_record.expires_at
     )
         
@@ -99,7 +92,7 @@ def execute_release(
     protocol = ReleaseProtocol(
         authorizer=DBAuthorizer(db),
         manifest_provider=DBManifestProvider(db),
-        share_b_provider=DBShareBProvider(db),
+        share_b_provider=DBShareBProvider(db, keystore),
         recipient_key_provider=DBRecipientKeyProvider(db),
         document_provider=DBDocumentProvider(db),
         plaintext_processor=DBPlaintextProcessor(db),
@@ -107,7 +100,7 @@ def execute_release(
         threshold_repository=thresh_repo,
         authority_secret_key=None, # In DBAuthorityKEMProvider we use provider
         authority_key_id="authority",
-        authority_kem_key_provider=DBAuthorityKEMProvider(db),
+        authority_kem_key_provider=DBAuthorityKEMProvider(db, keystore),
         authority_sig_alg=settings.signature_parameter
     )
     
@@ -162,7 +155,7 @@ def execute_release(
         db.add(db_artifact)
         
         # Mark challenge as consumed race-safe
-        res = db.query(DBAuthChallenge).filter(DBAuthChallenge.nonce == chal_record.nonce).delete()
+        res = db.query(ReleaseChallenge).filter(ReleaseChallenge.nonce == chal_record.nonce).delete()
         if res == 0:
             raise ValueError("Challenge already consumed")
             

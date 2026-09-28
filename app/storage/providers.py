@@ -26,21 +26,23 @@ class DBManifestProvider(ManifestProvider):
             protocol_version="1.0",
             document_id=record.document_id,
             encryption_algorithm="AES-GCM",
-            encryption_version="1.0",
+            encryption_version=record.encryption_version,
             kem_algorithm=record.kem_algorithm,
-            kem_version="1.0",
+            kem_version=record.kem_version,
             signature_algorithm=record.signature_algorithm,
-            signature_version="1.0",
-            ciphertext_hash="unknown", # We'd need to compute or store it
-            recipient_share_reference="share_a",
-            sender_identity_reference="unknown",
+            signature_version=record.signature_version,
+            ciphertext_hash=record.ciphertext_hash,
+            recipient_share_reference=record.recipient_share_reference,
+            sender_identity_reference=record.sender_identity_reference,
             manifest_id=record.id,
-            creation_timestamp="0"
+            creation_timestamp=record.creation_timestamp,
+            manifest_signature=record.manifest_signature
         )
 
 class DBShareBProvider(ShareBProvider):
-    def __init__(self, db_session):
+    def __init__(self, db_session, keystore):
         self.db = db_session
+        self.keystore = keystore
         
     def get_share_b(self, document_id: str, recipient_key_id: str) -> bytes | None:
         # Currently we store share_b for AUTHORITY. 
@@ -52,9 +54,8 @@ class DBShareBProvider(ShareBProvider):
         if record:
             from app.config.settings import settings
             if settings.environment == "production":
-                from app.state import state
-                return state.keystore.decrypt_data(record.share_b_hex)
-            return bytes.fromhex(record.share_b_hex)
+                return self.keystore.decrypt_data(record.encrypted_share)
+            return bytes.fromhex(record.encrypted_share)
         return None
 
 class DBDocumentProvider(DocumentProvider):
@@ -118,10 +119,9 @@ class DBAuthorizer(ReleaseAuthorizer):
         return recipient_key_id in recipients
 
 class DBAuthorityKEMProvider(AuthorityKEMKeyProvider):
-    def __init__(self, db_session):
+    def __init__(self, db_session, keystore):
         self.db = db_session
-        from app.state import state
-        self.keystore = state.keystore
+        self.keystore = keystore
         
     def _get_keypair(self):
         from app.storage.models import EncryptedKeyMaterial

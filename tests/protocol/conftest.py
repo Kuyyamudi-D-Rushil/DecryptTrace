@@ -129,7 +129,7 @@ def mock_crypto_state():
         kem_version="1.0",
         signature_algorithm="ML-DSA-65",
         signature_version="1.0",
-        ciphertext_hash="hash",
+        ciphertext_hash=__import__("hashlib").sha256(ciphertext).hexdigest(),
         recipient_share_reference="ref",
         sender_identity_reference="sender",
         manifest_id="man1",
