@@ -15,6 +15,7 @@ class Config(BaseModel):
     
     jwt_secret: str | None = None
     admin_bootstrap_key: str | None = None
+    master_key: str | None = None
 
     
     # PQC configuration
@@ -48,8 +49,12 @@ class Config(BaseModel):
         if self.signature_algorithm != "ML-DSA":
             raise ValueError(f"Unsupported Signature algorithm: {self.signature_algorithm}")
         if self.environment == "production":
-            if not self.jwt_secret:
-                raise ValueError("DT_JWT_SECRET must be set in production")
+            if not self.jwt_secret or len(self.jwt_secret.encode()) < 32:
+                raise ValueError("DT_JWT_SECRET must be at least 32 bytes in production")
+            if not getattr(self, 'master_key', None) or len(self.master_key.encode()) < 32:
+                raise ValueError("DT_MASTER_KEY must be at least 32 bytes in production")
+            if not getattr(self, 'admin_bootstrap_key', None) or len(self.admin_bootstrap_key) < 16:
+                raise ValueError("DT_ADMIN_BOOTSTRAP_KEY is missing or too short")
             if "postgresql" not in self.database_url:
                 raise ValueError("Production requires a PostgreSQL database url")
         return self
@@ -62,7 +67,8 @@ def load_config() -> Config:
         air_gap_mode=os.environ.get("DT_AIR_GAP", "true").lower() == "true",
         kem_parameter=os.environ.get("DT_KEM_PARAM", "ML-KEM-768"), # type: ignore
         jwt_secret=os.environ.get("DT_JWT_SECRET"),
-        admin_bootstrap_key=os.environ.get("DT_ADMIN_BOOTSTRAP_KEY")
+        admin_bootstrap_key=os.environ.get("DT_ADMIN_BOOTSTRAP_KEY"),
+        master_key=os.environ.get("DT_MASTER_KEY")
     )
 
 settings = load_config()

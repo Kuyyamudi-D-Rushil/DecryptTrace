@@ -10,10 +10,10 @@ import time
 import os
 
 os.environ["DT_ADMIN_BOOTSTRAP_KEY"] = "test_admin_key"
-os.environ["DT_JWT_SECRET"] = "test_secret_key"
+os.environ["DT_JWT_SECRET"] = "test_secret_key_1234567890123456"
 from app.config.settings import settings
 settings.admin_bootstrap_key = "test_admin_key"
-settings.jwt_secret = "test_secret_key"
+settings.jwt_secret = "test_secret_key_1234567890123456"
 
 client = TestClient(app)
 key_prov = get_key_provider()
@@ -33,6 +33,7 @@ def test_health_check():
 def test_full_api_workflow():
     sender_pk, sender_sk = key_prov.get_dsa_keypair("alice")
     recip_pk, recip_sk = key_prov.get_dsa_keypair("bob")
+    recip_kem_pk, _ = key_prov.get_kem_keypair("bob")
     admin_pk, admin_sk = key_prov.get_dsa_keypair("admin")
     
     # 0. Register Admin
@@ -56,7 +57,8 @@ def test_full_api_workflow():
     resp = client.post("/auth/register", headers=admin_headers, json={
         "username": "alice",
         "role": "sender",
-        "public_key": sender_pk.hex()
+        "public_key": sender_pk.hex(),
+        "kem_public_key": key_prov.get_kem_keypair("alice")[0].hex()
     })
     assert resp.status_code == 200
     
@@ -64,7 +66,8 @@ def test_full_api_workflow():
     resp = client.post("/auth/register", headers=admin_headers, json={
         "username": "bob",
         "role": "recipient",
-        "public_key": recip_pk.hex()
+        "public_key": recip_pk.hex(),
+        "kem_public_key": recip_kem_pk.hex()
     })
     assert resp.status_code == 200
     bob_id = resp.json()["id"]

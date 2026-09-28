@@ -13,8 +13,12 @@ class AppState:
         self.statements = {}
         self.receipts = {}
         self.evidence_packages = {}
-        self.watermarked_images = {}
-        self.keystore = DevelopmentSoftwareProvider()
+        from app.config.settings import settings
+        if settings.environment == "production":
+            from app.crypto.kms import ProductionKeystore
+            self.keystore = ProductionKeystore(settings.master_key or "default") # Will fail fast at startup if missing
+        else:
+            self.keystore = DevelopmentSoftwareProvider()
 
     def save(self, path=None):
         # Deprecated: Persistence moved to database repositories in Milestone 1.
@@ -24,3 +28,5 @@ class AppState:
     def load(cls, path=None):
         # Deprecated: Persistence moved to database repositories in Milestone 1.
         return cls()
+
+state = AppState()

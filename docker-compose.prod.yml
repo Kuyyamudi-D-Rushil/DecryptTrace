@@ -12,10 +12,16 @@ services:
       - DT_ENV=production
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       - DT_JWT_SECRET=${DT_JWT_SECRET}
-      - DT_ADMIN_BOOTSTRAP_KEY=${DT_ADMIN_BOOTSTRAP_KEY}
+      - DT_ADMIN_BOOTSTRAP_KEY=
+      - DT_MASTER_KEY=${DT_ADMIN_BOOTSTRAP_KEY}
       - DT_AIR_GAP=true
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
     depends_on:
       db:
         condition: service_healthy

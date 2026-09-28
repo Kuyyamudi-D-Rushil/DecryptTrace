@@ -107,7 +107,7 @@ def execute_release(
         threshold_repository=thresh_repo,
         authority_secret_key=None, # In DBAuthorityKEMProvider we use provider
         authority_key_id="authority",
-        authority_kem_key_provider=DBAuthorityKEMProvider(),
+        authority_kem_key_provider=DBAuthorityKEMProvider(db),
         authority_sig_alg=settings.signature_parameter
     )
     

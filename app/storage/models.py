@@ -123,3 +123,17 @@ class LedgerEntryRecord(Base):
     payload = Column(Text, nullable=False)
     entry_hash = Column(String, nullable=False, unique=True)
     created_at = Column(Float, default=time.time)
+
+class ReleaseChallenge(Base):
+    __tablename__ = "release_challenges"
+    nonce = Column(String, primary_key=True, index=True)
+    request_id = Column(String, nullable=False)
+    recipient_id = Column(String, nullable=False)
+    protocol_version = Column(String, nullable=False)
+    expires_at = Column(Float, nullable=False)
+
+class EncryptedKeyMaterial(Base):
+    __tablename__ = "encrypted_key_material"
+    id = Column(String, primary_key=True, index=True)
+    encrypted_payload = Column(String, nullable=False)
+    created_at = Column(Float, default=time.time)

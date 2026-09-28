@@ -50,6 +50,10 @@ class DBShareBProvider(ShareBProvider):
             KeyShare.recipient_id == "AUTHORITY" 
         ).first()
         if record:
+            from app.config.settings import settings
+            if settings.environment == "production":
+                from app.state import state
+                return state.keystore.decrypt_data(record.share_b_hex)
             return bytes.fromhex(record.share_b_hex)
         return None
 
@@ -74,13 +78,10 @@ class DBRecipientKeyProvider(RecipientKeyProvider):
         return bytes.fromhex(user.public_key)
         
     def get_recipient_kem_pubkey(self, recipient_key_id: str) -> bytes:
-        # In our simplified setup, user.public_key is the DSA key. We need KEM too?
-        # Actually, our protocol has KEM and DSA. For MVP, if we don't store both,
-        # we can fetch them via KeyProvider if using the development provider,
-        # or require the user model to store both.
-        # To avoid schema changes, we use the provider fallback.
-        provider = get_key_provider()
-        return provider.get_kem_keypair(recipient_key_id)[0]
+        user = self.db.query(User).filter(User.id == recipient_key_id).first()
+        if not user or not user.kem_public_key:
+            raise ValueError("Recipient KEM key not found")
+        return bytes.fromhex(user.kem_public_key)
 
 class DBPlaintextProcessor(ControlledPlaintextProcessor):
     def __init__(self, db_session):
@@ -117,13 +118,36 @@ class DBAuthorizer(ReleaseAuthorizer):
         return recipient_key_id in recipients
 
 class DBAuthorityKEMProvider(AuthorityKEMKeyProvider):
-    def __init__(self):
-        self.provider = get_key_provider()
+    def __init__(self, db_session):
+        self.db = db_session
+        from app.state import state
+        self.keystore = state.keystore
         
+    def _get_keypair(self):
+        from app.storage.models import EncryptedKeyMaterial
+        from app.config.settings import settings
+        import json
+        
+        if settings.environment != "production":
+            return self.keystore.get_kem_keypair("authority")
+            
+        record = self.db.query(EncryptedKeyMaterial).filter(EncryptedKeyMaterial.id == "authority_kem").first()
+        if not record:
+            from app.crypto.kem import KEMWrapper
+            kem = KEMWrapper("ML-KEM-768")
+            pk, sk = kem.generate_keypair()
+            payload = json.dumps({"pk": pk.hex(), "sk": sk.hex()})
+            enc_payload = self.keystore.encrypt_data(payload.encode())
+            record = EncryptedKeyMaterial(id="authority_kem", encrypted_payload=enc_payload)
+            self.db.add(record)
+            self.db.commit()
+            return pk, sk
+            
+        payload = json.loads(self.keystore.decrypt_data(record.encrypted_payload).decode())
+        return bytes.fromhex(payload["pk"]), bytes.fromhex(payload["sk"])
+
     def get_authority_kem_public_key(self) -> bytes:
-        return self.provider.get_kem_keypair("authority")[0]
+        return self._get_keypair()[0]
         
     def get_authority_kem_secret_key(self) -> bytes:
-        # Note: ProductionKMSProvider throws NotImplementedError for this.
-        # In a real environment, KEM decapsulation happens on the HSM.
-        return self.provider.get_kem_keypair("authority")[1]
+        return self._get_keypair()[1]

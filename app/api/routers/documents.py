@@ -114,10 +114,16 @@ def upload_document(
     # For MVP, we store a single share_b per document and give share_a out later,
     # or the recipient holds share_a.
     # We will use recipient_id = "AUTHORITY" or leave it generic.
+    from app.state import state
+    from app.config.settings import settings
+    auth_share_val = share_b.hex()
+    if settings.environment == "production":
+        auth_share_val = state.keystore.encrypt_data(share_b)
+
     auth_share = KeyShare(
         document_id=doc_id,
         recipient_id="AUTHORITY",
-        share_b_hex=share_b.hex()
+        share_b_hex=auth_share_val
     )
     db.add(auth_share)
     
@@ -132,10 +138,14 @@ def upload_document(
     # Store Share A for the Sender temporarily (or securely wrapped)
     # The Sender must authorize recipients using the /authorize endpoint, 
     # which will wrap this Share A for the recipient.
+    sender_share_val = share_a.hex()
+    if settings.environment == "production":
+        sender_share_val = state.keystore.encrypt_data(share_a)
+
     sender_share = KeyShare(
         document_id=doc_id,
         recipient_id=sender_id,
-        share_b_hex=share_a.hex() # we use this column to store Share A for the sender
+        share_b_hex=sender_share_val # we use this column to store Share A for the sender
     )
     db.add(sender_share)
     

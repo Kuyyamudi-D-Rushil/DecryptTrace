@@ -24,6 +24,8 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 # Run as non-root user
 RUN addgroup --system decrypttrace && adduser --system --group decrypttrace
 USER decrypttrace
