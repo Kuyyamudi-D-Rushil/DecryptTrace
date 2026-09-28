@@ -47,6 +47,22 @@ def health_check():
         "tls_configured": tls_enabled,
     }
 
+from sqlalchemy.sql import text
+from app.storage.database import SessionLocal
+
+@app.get("/ready")
+def ready_check():
+    db = SessionLocal()
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail="Database not ready")
+    finally:
+        db.close()
+        
+    return {"status": "ready"}
+
 @app.get("/version")
 def version():
     return {"version": settings.app_version, "protocol_version": settings.protocol_version}
